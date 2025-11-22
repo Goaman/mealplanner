@@ -1,0 +1,24 @@
+# Packages
+node_modules/
+.pnpm-store/
+
+# Mac OS
+.DS_Store
+.DS_Store?
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Files
+*.log
+
+# Config
+.ssl/
+
+# Build, cache, temp
+dist/
+.cache/
+cache/
+tmp/
+
