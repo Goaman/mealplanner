@@ -6,6 +6,7 @@ import { ShoppingList } from './components/ShoppingList';
 import { Recipe, DailyPlan, MealType, Ingredient } from './types';
 import { supabase } from './lib/supabase';
 import { Json } from './types/supabase';
+import { NewRecipePage } from './components/NewRecipePage';
 
 const generateWeekPlan = (): DailyPlan[] => {
   const today = new Date();
@@ -28,7 +29,7 @@ const generateWeekPlan = (): DailyPlan[] => {
 };
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'planner' | 'recipes' | 'shopping'>('planner');
+  const [activeTab, setActiveTab] = useState<'planner' | 'recipes' | 'shopping' | 'new-recipe'>('planner');
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [weekPlan, setWeekPlan] = useState<DailyPlan[]>(generateWeekPlan());
   const [session, setSession] = useState(null);
@@ -124,6 +125,7 @@ function App() {
                id: savedRecipe.id,
            };
            setRecipes([...recipes, formattedRecipe]);
+           setActiveTab('recipes');
       }
   };
 
@@ -245,6 +247,13 @@ function App() {
           onAddRecipe={handleAddRecipe}
           onEditRecipe={handleEditRecipe}
           onDeleteRecipe={handleDeleteRecipe}
+          onNewRecipeClick={() => setActiveTab('new-recipe')}
+        />
+      )}
+      {activeTab === 'new-recipe' && (
+        <NewRecipePage
+          onSave={handleAddRecipe}
+          onCancel={() => setActiveTab('recipes')}
         />
       )}
       {activeTab === 'shopping' && (
