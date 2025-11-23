@@ -22,3 +22,5 @@ dist/
 cache/
 tmp/
 
+.env
+.env.local

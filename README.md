@@ -46,3 +46,5 @@ A modern, responsive meal planning application built with React, TypeScript, and
 - `npm run lint`: Run linter
 
 # mealplanner
+
+

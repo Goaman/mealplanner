@@ -3,43 +3,9 @@ import { Layout } from './components/Layout';
 import { RecipeList } from './components/RecipeList';
 import { MealPlanner } from './components/MealPlanner';
 import { ShoppingList } from './components/ShoppingList';
-import { Recipe, DailyPlan, MealType } from './types';
-
-// Mock Data
-const INITIAL_RECIPES: Recipe[] = [
-  {
-    id: '1',
-    title: 'Spaghetti Carbonara',
-    description: 'Classic Italian pasta dish with eggs, cheese, pancetta, and black pepper.',
-    ingredients: [
-      { id: '1', name: 'Spaghetti', amount: 400, unit: 'g' },
-      { id: '2', name: 'Pancetta', amount: 150, unit: 'g' },
-      { id: '3', name: 'Eggs', amount: 4, unit: 'large' },
-      { id: '4', name: 'Pecorino Cheese', amount: 100, unit: 'g' }
-    ],
-    instructions: ['Boil pasta', 'Fry pancetta', 'Mix eggs and cheese', 'Combine all'],
-    prepTime: 10,
-    cookTime: 15,
-    servings: 4,
-    imageUrl: 'https://images.unsplash.com/photo-1612874742237-6526221588e3?auto=format&fit=crop&w=800&q=80'
-  },
-  {
-    id: '2',
-    title: 'Chicken Stir Fry',
-    description: 'Quick and healthy vegetable and chicken stir fry.',
-    ingredients: [
-      { id: '1', name: 'Chicken Breast', amount: 500, unit: 'g' },
-      { id: '2', name: 'Bell Peppers', amount: 2, unit: 'whole' },
-      { id: '3', name: 'Soy Sauce', amount: 3, unit: 'tbsp' },
-      { id: '4', name: 'Rice', amount: 200, unit: 'g' }
-    ],
-    instructions: ['Cook rice', 'Fry chicken', 'Add veggies', 'Add sauce'],
-    prepTime: 15,
-    cookTime: 10,
-    servings: 2,
-    imageUrl: 'https://images.unsplash.com/photo-1512058564366-18510be2db19?auto=format&fit=crop&w=800&q=80'
-  }
-];
+import { Recipe, DailyPlan, MealType, Ingredient } from './types';
+import { supabase } from './lib/supabase';
+import { Json } from './types/supabase';
 
 const generateWeekPlan = (): DailyPlan[] => {
   const today = new Date();
@@ -63,56 +29,209 @@ const generateWeekPlan = (): DailyPlan[] => {
 
 function App() {
   const [activeTab, setActiveTab] = useState<'planner' | 'recipes' | 'shopping'>('planner');
-  const [recipes, setRecipes] = useState<Recipe[]>(() => {
-    const saved = localStorage.getItem('recipes');
-    return saved ? JSON.parse(saved) : INITIAL_RECIPES;
-  });
-  
-  const [weekPlan, setWeekPlan] = useState<DailyPlan[]>(() => {
-    const saved = localStorage.getItem('weekPlan');
-    return saved ? JSON.parse(saved) : generateWeekPlan();
-  });
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [weekPlan, setWeekPlan] = useState<DailyPlan[]>(generateWeekPlan());
+  const [session, setSession] = useState(null);
 
   useEffect(() => {
-    localStorage.setItem('recipes', JSON.stringify(recipes));
-  }, [recipes]);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session as any);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session as any);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('weekPlan', JSON.stringify(weekPlan));
-  }, [weekPlan]);
+    if (!session) return;
 
-  const handleAddRecipe = (newRecipe: Omit<Recipe, 'id'>) => {
-    const recipe = { ...newRecipe, id: crypto.randomUUID() };
-    setRecipes([...recipes, recipe]);
+    const fetchRecipes = async () => {
+        const { data, error } = await supabase.from('recipes').select('*');
+        if (error) {
+            console.error('Error fetching recipes:', error);
+        } else if (data) {
+            setRecipes(data.map(r => ({
+                id: r.id,
+                title: r.title,
+                description: r.description || '',
+                ingredients: (r.ingredients as unknown) as Ingredient[],
+                instructions: (r.instructions as unknown) as string[],
+                imageUrl: r.image_url || undefined,
+                prepTime: r.prep_time,
+                cookTime: r.cook_time,
+                servings: r.servings
+            })));
+        }
+    };
+
+    const fetchMealPlans = async () => {
+        const today = new Date().toISOString().split('T')[0];
+        const { data, error } = await supabase.from('meal_plans').select('*').gte('date', today);
+        if (error) {
+             console.error('Error fetching meal plans:', error);
+        } else if (data) {
+            if (data.length > 0) {
+                 setWeekPlan(currentPlan => {
+                     return currentPlan.map(day => {
+                         const savedDay = data.find(d => d.date === day.date);
+                         if (savedDay) {
+                             return {
+                                 ...day,
+                                 meals: (savedDay.meals as unknown) as DailyPlan['meals']
+                             };
+                         }
+                         return day;
+                     });
+                 });
+            }
+        }
+    }
+
+    fetchRecipes();
+    fetchMealPlans();
+
+  }, [session]);
+
+
+  const handleAddRecipe = async (newRecipe: Omit<Recipe, 'id'>) => {
+      if (!session) return;
+
+      const recipeToSave = {
+          title: newRecipe.title,
+          description: newRecipe.description,
+          ingredients: newRecipe.ingredients as unknown as Json,
+          instructions: newRecipe.instructions as unknown as Json,
+          image_url: newRecipe.imageUrl || null,
+          prep_time: newRecipe.prepTime,
+          cook_time: newRecipe.cookTime,
+          servings: newRecipe.servings,
+      };
+
+      const { data, error } = await supabase.from('recipes').insert([recipeToSave]).select();
+
+      if (error) {
+          console.error('Error adding recipe:', error);
+          alert('Failed to add recipe');
+      } else if (data) {
+           const savedRecipe = data[0];
+           const formattedRecipe: Recipe = {
+               ...newRecipe, 
+               id: savedRecipe.id,
+           };
+           setRecipes([...recipes, formattedRecipe]);
+      }
   };
 
-  const handleEditRecipe = (updatedRecipe: Recipe) => {
-    setRecipes(recipes.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
+  const handleEditRecipe = async (updatedRecipe: Recipe) => {
+      if (!session) return;
+
+      const { error } = await supabase.from('recipes').update({
+          title: updatedRecipe.title,
+          description: updatedRecipe.description,
+          ingredients: updatedRecipe.ingredients as unknown as Json,
+          instructions: updatedRecipe.instructions as unknown as Json,
+          image_url: updatedRecipe.imageUrl || null,
+          prep_time: updatedRecipe.prepTime,
+          cook_time: updatedRecipe.cookTime,
+          servings: updatedRecipe.servings
+      }).eq('id', updatedRecipe.id);
+
+      if (error) {
+          console.error('Error updating recipe:', error);
+          alert('Failed to update recipe');
+      } else {
+          setRecipes(recipes.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
+      }
   };
 
-  const handleDeleteRecipe = (id: string) => {
-    setRecipes(recipes.filter(r => r.id !== id));
+  const handleDeleteRecipe = async (id: string) => {
+      if (!session) return;
+
+      const { error } = await supabase.from('recipes').delete().eq('id', id);
+      
+      if (error) {
+          console.error('Error deleting recipe:', error);
+           alert('Failed to delete recipe');
+      } else {
+          setRecipes(recipes.filter(r => r.id !== id));
+      }
   };
 
-  const handleUpdateMeal = (date: string, mealType: MealType, recipeId: string | null) => {
+  const handleUpdateMeal = async (date: string, mealType: MealType, recipeId: string | null) => {
+    if (!session) return;
+    
+    const dayPlan = weekPlan.find(p => p.date === date);
+    if (!dayPlan) return;
+
+    const updatedMeals = {
+        ...dayPlan.meals,
+        [mealType]: { recipeId: recipeId || undefined }
+    };
+
+    // Optimistic update
     setWeekPlan(currentPlan => 
       currentPlan.map(day => {
         if (day.date === date) {
           return {
             ...day,
-            meals: {
-              ...day.meals,
-              [mealType]: { recipeId: recipeId || undefined }
-            }
+            meals: updatedMeals
           };
         }
         return day;
       })
     );
+
+    // Upsert into Supabase
+    const { error } = await supabase.from('meal_plans').upsert([{
+        date: date,
+        meals: updatedMeals as unknown as Json
+    }], { onConflict: 'date,user_id' });
+
+    if (error) {
+        console.error('Error updating meal plan:', error);
+        // Revert optimistic update if needed (omitted for brevity)
+    }
   };
+  
+  const handleLogout = async () => {
+      await supabase.auth.signOut();
+      setRecipes([]);
+      setWeekPlan(generateWeekPlan());
+  };
+
+
+  if (!session) {
+      return (
+          <div className="min-h-screen flex items-center justify-center bg-gray-50">
+              <div className="text-center">
+                  <h1 className="text-4xl font-bold text-blue-600 mb-4">SmartPlanner</h1>
+                  <p className="text-gray-600 mb-8">Plan your meals, shop smarter, eat better.</p>
+                  <button 
+                    onClick={() => supabase.auth.signInAnonymously()}
+                    className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                      Start Planning (Guest)
+                  </button>
+                  <div className="mt-4 text-sm text-gray-500">
+                    Note: Guest data is saved but clearing browser data may lose it.
+                  </div>
+              </div>
+          </div>
+      );
+  }
 
   return (
     <Layout activeTab={activeTab} onTabChange={setActiveTab}>
+        <div className="absolute top-4 right-4">
+            <button onClick={handleLogout} className="text-sm text-gray-500 hover:text-red-600">
+                Sign Out
+            </button>
+        </div>
       {activeTab === 'planner' && (
         <MealPlanner 
           weekPlan={weekPlan} 
